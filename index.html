@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wi-Fi Vault</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Core Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/kdbxweb@2.1.1/dist/kdbxweb.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+</head>
+<body>
+
+  <!-- Top App Navigation -->
+  <header>
+    <div class="header-title-row">
+      <h1>Wi-Fi Vault</h1>
+      <span id="vault-status-indicator" class="status-badge locked">Locked</span>
+    </div>
+    <div class="header-actions">
+      <button type="button" id="btn-lock-vault" class="btn-secondary" title="Lock Vault">🔒 Lock</button>
+      <button type="button" id="btn-export-kdbx" class="btn-secondary" title="Export .kdbx">💾 Export</button>
+      <button type="button" id="btn-open-scanner" class="btn-primary">📷 Scan</button>
+      <button type="button" id="btn-manual-add" class="btn-secondary">+ Add</button>
+    </div>
+  </header>
+
+  <!-- Main Vault Dashboard View -->
+  <main id="vault-view">
+    <div class="vault-controls">
+      <input type="text" id="vault-search" placeholder="Search by SSID or location...">
+      <div class="filter-group">
+        <button type="button" id="filter-all" class="btn-filter active">All</button>
+        <button type="button" id="filter-favorites" class="btn-filter">★ Favorites</button>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <div id="vault-empty" class="empty-state hidden">
+      <p>No Wi-Fi credentials stored yet.</p>
+      <span>Scan a router sticker or add one manually.</span>
+    </div>
+
+    <!-- Dynamic Wi-Fi Cards Container -->
+    <div id="wifi-list" class="wifi-grid"></div>
+  </main>
+
+  <!-- Vault Unlock / Setup Modal -->
+  <div id="auth-modal" class="modal">
+    <div class="modal-content auth-box">
+      <h2 id="auth-title">Unlock KDBX Vault</h2>
+      <p id="auth-desc">Enter your master password to decrypt your Wi-Fi credentials.</p>
+
+      <div class="form-group">
+        <label for="master-password-input">Master Password</label>
+        <input type="password" id="master-password-input" placeholder="Enter master password" autocomplete="current-password">
+      </div>
+
+      <div id="auth-error" class="error-banner hidden"></div>
+
+      <div class="auth-buttons">
+        <button type="button" id="btn-unlock-vault" class="btn-primary" onclick="window.handleUnlockVault()">Unlock</button>
+        <button type="button" id="btn-create-new-kdbx" class="btn-secondary" onclick="window.handleCreateVault()">Create New Vault</button>
+      </div>
+
+      <div class="import-section">
+        <label for="file-import-kdbx" class="btn-link">Or import existing .kdbx file</label>
+        <input type="file" id="file-import-kdbx" accept=".kdbx">
+      </div>
+    </div>
+  </div>
+
+  <!-- Camera / QR / OCR Scanner Modal -->
+  <div id="scanner-modal" class="modal hidden">
+    <div class="modal-content scanner-container">
+      <div class="scanner-header">
+        <h3>Scan Router / QR</h3>
+        <button type="button" id="btn-close-scanner" class="btn-close">&times;</button>
+      </div>
+
+      <div class="video-wrapper">
+        <video id="camera-stream" playsinline></video>
+        <canvas id="capture-canvas" class="hidden"></canvas>
+        
+        <div class="scanner-reticle">
+          <div class="reticle-guide"></div>
+        </div>
+      </div>
+
+      <div class="scanner-controls">
+        <span id="scan-status">Point at QR code or router sticker...</span>
+        <button type="button" id="btn-run-ocr" class="btn-secondary">Capture Sticker Text (OCR)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manual Entry / Confirmation Modal -->
+  <div id="confirm-modal" class="modal hidden">
+    <div class="modal-content confirm-form">
+      <h3>Verify Wi-Fi Details</h3>
+      
+      <div class="form-group">
+        <label for="input-ssid">Network Name (SSID)</label>
+        <input type="text" id="input-ssid" placeholder="e.g. Home_Wi-Fi" required>
+      </div>
+
+      <div class="form-group">
+        <label for="input-password">Password</label>
+        <input type="text" id="input-password" placeholder="e.g. WPA key">
+      </div>
+
+      <div class="form-group">
+        <label for="input-auth-type">Security Type</label>
+        <select id="input-auth-type">
+          <option value="WPA2">WPA/WPA2/WPA3</option>
+          <option value="WEP">WEP</option>
+          <option value="nopass">None (Open)</option>
+        </select>
+      </div>
+
+      <div class="location-group">
+        <label for="input-location-name">📍 Location Name (Optional)</label>
+        <div class="input-with-button">
+          <input type="text" id="input-location-name" placeholder="e.g. Home, Office, Central Cafe">
+          <button type="button" id="btn-detect-location" class="btn-secondary" title="Fetch GPS Location">🎯</button>
+        </div>
+        <div id="location-coordinates-display" class="coordinates-label hidden">
+          Lat: <span id="display-lat"></span>, Lng: <span id="display-lng"></span>
+          <button type="button" id="btn-clear-coords" class="btn-clear-link">Clear</button>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" id="btn-cancel-save" class="btn-secondary">Discard</button>
+        <button type="button" id="btn-confirm-save" class="btn-primary">Save to Vault</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Standard script tag (No import errors) -->
+  <script src="js/app.js"></script>
+</body>
+</html>
