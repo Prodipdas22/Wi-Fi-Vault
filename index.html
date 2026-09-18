@@ -12,8 +12,12 @@
     .hidden{display:none!important;visibility:hidden!important;pointer-events:none!important}
     .modal{z-index:9999}.modal-content{max-height:calc(100dvh - 2rem);overflow:auto}
     button,input,select,label{touch-action:manipulation}button,input,select,label.btn-link{min-height:44px}
-    .auth-tools{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-top:.4rem}
-    .auth-tools button{font-size:.85rem}
+    .auth-tools{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-top:.4rem}.auth-tools button{font-size:.85rem}
+    .install-popup{position:fixed;left:50%;bottom:max(1rem,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(92vw,420px);z-index:12000}
+    .install-popup-inner{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1rem;border-radius:16px;background:rgba(15,23,42,0.96);border:1px solid rgba(148,163,184,.22);box-shadow:0 20px 44px rgba(2,6,23,.42)}
+    .install-popup-copy{display:flex;flex-direction:column;gap:.25rem;font-size:.9rem;color:#e2e8f0}.install-popup-copy strong{font-size:1rem}
+    .install-actions{display:flex;gap:.6rem;flex-shrink:0}
+    @media (max-width:420px){.install-popup-inner{flex-direction:column;align-items:stretch}.install-actions{width:100%}.install-actions button{flex:1}}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/kdbxweb@2.1.1/dist/kdbxweb.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
@@ -25,6 +29,15 @@
 <div id="confirm-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-content confirm-form"><h3 id="form-title">Add Wi-Fi network</h3><div class="form-group"><label for="input-ssid">Network name (SSID)</label><input id="input-ssid" type="text" required></div><div class="form-group"><label for="input-password">Password</label><input id="input-password" type="text" autocomplete="off"></div><div class="form-group"><label for="input-auth-type">Security</label><select id="input-auth-type"><option value="WPA2">WPA/WPA2/WPA3</option><option value="WEP">WEP</option><option value="nopass">Open</option></select></div><div class="modal-actions"><button id="btn-cancel-save" class="btn-secondary" type="button">Cancel</button><button id="btn-confirm-save" class="btn-primary" type="button">Save</button></div></div></div>
 <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-content confirm-form"><h3>Private GitHub vault</h3><p>Use the exact private repository slug. Example: <b>KDbx-vault</b>.</p><div class="form-group"><label for="gh-token">Fine-grained PAT</label><input id="gh-token" type="password" autocomplete="off" placeholder="github_pat_…"></div><div class="form-group"><label for="gh-owner">Owner</label><input id="gh-owner" type="text" value="Prodipdas22"></div><div class="form-group"><label for="gh-repo">Private repository</label><input id="gh-repo" type="text" placeholder="KDbx-vault"></div><div class="form-group"><label for="gh-filename">File path</label><input id="gh-filename" type="text" value="vault.kdbx"></div><div class="modal-actions"><button id="btn-close-settings" class="btn-secondary" type="button">Cancel</button><button id="btn-save-settings" class="btn-primary" type="button">Save</button></div></div></div>
 <div id="scanner-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-content scanner-container"><div class="scanner-header"><h3>Scan Wi-Fi QR</h3><button id="btn-close-scanner" class="btn-close" type="button">×</button></div><div class="video-wrapper"><video id="camera-stream" playsinline muted></video><canvas id="capture-canvas" class="hidden"></canvas></div><div class="scanner-controls"><span id="scan-status">Point at a Wi-Fi QR code.</span></div></div></div>
+<div id="install-popup" class="install-popup hidden" aria-live="polite">
+  <div class="install-popup-inner">
+    <div class="install-popup-copy"><strong>Install Wi‑Fi Vault</strong><span>Fast access, offline mode, and app-like browsing.</span></div>
+    <div class="install-actions">
+      <button id="btn-install-app" class="btn-primary" type="button">Install</button>
+      <button id="btn-dismiss-install" class="btn-secondary" type="button">Later</button>
+    </div>
+  </div>
+</div>
 <script src="js/app.js"></script>
 </body>
 </html>
