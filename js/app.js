@@ -223,23 +223,29 @@ async function pushToGitHub() {
   const binary = await activeDb.save();
   const base64Content = arrayBufferToBase64(binary);
 
-  let currentSha = sessionStorage.getItem('kdbx_github_sha');
-  const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.filePath}`;
+  const cleanOwner = cfg.owner.trim();
+  const cleanRepo = cfg.repo.trim();
+  const cleanPath = (cfg.filePath || 'vault.kdbx').trim();
+  const cleanToken = cfg.token.trim();
 
-  if (!currentSha) {
-    try {
-      const checkRes = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${cfg.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        }
-      });
-      if (checkRes.ok) {
-        const fileInfo = await checkRes.json();
-        currentSha = fileInfo.sha;
+  // Support both Classic (ghp_) and Fine-grained (github_pat_) tokens
+  const authHeader = cleanToken.startsWith('ghp_') ? `token ${cleanToken}` : `Bearer ${cleanToken}`;
+  const url = `https://api.github.com/repos/${cleanOwner}/${cleanRepo}/contents/${cleanPath}`;
+
+  // Fetch latest SHA
+  let currentSha = sessionStorage.getItem('kdbx_github_sha');
+  try {
+    const checkRes = await fetch(url, {
+      headers: {
+        'Authorization': authHeader,
+        'Accept': 'application/vnd.github.v3+json'
       }
-    } catch (_) {}
-  }
+    });
+    if (checkRes.ok) {
+      const fileInfo = await checkRes.json();
+      currentSha = fileInfo.sha;
+    }
+  } catch (_) {}
 
   const payload = {
     message: `Sync Wi-Fi Vault: ${new Date().toISOString()}`,
@@ -250,16 +256,15 @@ async function pushToGitHub() {
   const pushRes = await fetch(url, {
     method: 'PUT',
     headers: {
-      'Authorization': `Bearer ${cfg.token}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'Content-Type': 'application/json'
+      'Authorization': authHeader,
+      'Accept': 'application/vnd.github.v3+json'
     },
     body: JSON.stringify(payload)
   });
 
   if (!pushRes.ok) {
     const errorData = await pushRes.json().catch(() => ({}));
-    throw new Error(errorData.message || 'Failed to upload vault to GitHub.');
+    throw new Error(errorData.message || `HTTP ${pushRes.status}: ${pushRes.statusText}`);
   }
 
   const result = await pushRes.json();
