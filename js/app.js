@@ -1,7 +1,21 @@
-// --- Global State & Database Engine ---
+// ==========================================
+// Global Database & State Variables
+// ==========================================
 let activeDb = null;
 const STORAGE_KEY = 'kdbx_binary_store';
+const GITHUB_CONFIG_KEY = 'wifi_vault_github_cfg';
 
+let vaultData = [];
+let activeFilter = 'all';
+let editTargetId = null;
+let activeCoordinates = null;
+
+let videoStream = null;
+let qrScanInterval = null;
+
+// ==========================================
+// Base64 & Binary Utilities
+// ==========================================
 function arrayBufferToBase64(buffer) {
   let binary = '';
   const bytes = new Uint8Array(buffer);
@@ -20,6 +34,14 @@ function base64ToArrayBuffer(base64) {
   return bytes.buffer;
 }
 
+function escapeHTML(str) {
+  if (!str) return '';
+  return str.replace(/[&<>'"]/g, t => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[t] || t));
+}
+
+// ==========================================
+// KDBX Engine (Browser AES-KDF Native)
+// ==========================================
 async function persistActiveDb() {
   if (!activeDb) return;
   const binary = await activeDb.save();
@@ -33,19 +55,24 @@ function getStoredKdbxBuffer() {
 
 async function createNewKdbx(masterPassword) {
   if (typeof kdbxweb === 'undefined') {
-    throw new Error('KDBX library not loaded. Check internet connection.');
+    throw new Error('KDBX library not loaded. Check script imports.');
   }
 
   const credentials = new kdbxweb.Credentials(
     kdbxweb.ProtectedValue.fromString(masterPassword)
   );
 
-  // Create database
   const db = kdbxweb.Kdbx.create(credentials, 'WiFi-Vault');
 
-  // Explicitly set Key Derivation to AES-KDF so it uses native WebCrypto instead of missing Argon2 WASM
-  if (kdbxweb.Consts && kdbxweb.Consts.KdfId) {
-    db.header.setKdf(kdbxweb.Consts.KdfId.Aes);
+  // Enforce AES-KDF to avoid missing Argon2 WebAssembly errors in browser
+  try {
+    if (kdbxweb.Consts && kdbxweb.Consts.KdfId) {
+      db.header.setKdf(kdbxweb.Consts.KdfId.Aes);
+    }
+  } catch (_) {
+    if (db.header.kdfParameters) {
+      db.header.kdfParameters.set('$kdf', kdbxweb.Consts.KdfId.Aes);
+    }
   }
 
   activeDb = db;
@@ -53,12 +80,13 @@ async function createNewKdbx(masterPassword) {
   return db;
 }
 
-
 async function unlockKdbx(arrayBuffer, masterPassword) {
   if (typeof kdbxweb === 'undefined') {
     throw new Error('KDBX library not loaded.');
   }
-  const credentials = new kdbxweb.Credentials(kdbxweb.ProtectedValue.fromString(masterPassword));
+  const credentials = new kdbxweb.Credentials(
+    kdbxweb.ProtectedValue.fromString(masterPassword)
+  );
   const db = await kdbxweb.Kdbx.load(arrayBuffer, credentials);
   activeDb = db;
   return db;
@@ -95,7 +123,7 @@ function getKdbxRecords() {
 }
 
 async function saveKdbxRecord(record) {
-  if (!activeDb) throw new Error('Database is locked.');
+  if (!activeDb) throw new Error('Vault is locked.');
   const group = activeDb.getDefaultGroup();
   let entry = group.allEntries().find(e => (e.uuid.id || e.uuid.toString()) === record.id);
   if (!entry) {
@@ -116,7 +144,7 @@ async function saveKdbxRecord(record) {
 }
 
 async function deleteKdbxRecord(recordId) {
-  if (!activeDb) throw new Error('Database is locked.');
+  if (!activeDb) throw new Error('Vault is locked.');
   const group = activeDb.getDefaultGroup();
   const entry = group.allEntries().find(e => (e.uuid.id || e.uuid.toString()) === recordId);
   if (entry) {
@@ -145,10 +173,103 @@ function lockVault() {
   activeDb = null;
 }
 
-// --- Scanner Subsystem ---
-let videoStream = null;
-let qrScanInterval = null;
+// ==========================================
+// GitHub REST API Synchronization
+// ==========================================
+function getGitHubConfig() {
+  const raw = localStorage.getItem(GITHUB_CONFIG_KEY);
+  return raw ? JSON.parse(raw) : null;
+}
 
+function saveGitHubConfig(token, owner, repo, filePath = 'vault.kdbx') {
+  localStorage.setItem(GITHUB_CONFIG_KEY, JSON.stringify({ token, owner, repo, filePath }));
+}
+
+async function pullFromGitHub() {
+  const cfg = getGitHubConfig();
+  if (!cfg || !cfg.token) throw new Error('GitHub sync is not configured. Click ⚙️ to set it up.');
+
+  const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.filePath}`;
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${cfg.token}`,
+      'Accept': 'application/vnd.github.v3+json'
+    }
+  });
+
+  if (response.status === 404) {
+    return { buffer: null, sha: null };
+  }
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.message || 'Failed to download repository contents from GitHub.');
+  }
+
+  const data = await response.json();
+  sessionStorage.setItem('kdbx_github_sha', data.sha);
+  const cleanBase64 = data.content.replace(/\s/g, '');
+  return {
+    buffer: base64ToArrayBuffer(cleanBase64),
+    sha: data.sha
+  };
+}
+
+async function pushToGitHub() {
+  const cfg = getGitHubConfig();
+  if (!cfg || !cfg.token) throw new Error('GitHub sync is not configured. Click ⚙️ to set it up.');
+  if (!activeDb) throw new Error('Unlock vault before syncing changes.');
+
+  const binary = await activeDb.save();
+  const base64Content = arrayBufferToBase64(binary);
+
+  let currentSha = sessionStorage.getItem('kdbx_github_sha');
+  const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.filePath}`;
+
+  if (!currentSha) {
+    try {
+      const checkRes = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${cfg.token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+      if (checkRes.ok) {
+        const fileInfo = await checkRes.json();
+        currentSha = fileInfo.sha;
+      }
+    } catch (_) {}
+  }
+
+  const payload = {
+    message: `Sync Wi-Fi Vault: ${new Date().toISOString()}`,
+    content: base64Content
+  };
+  if (currentSha) payload.sha = currentSha;
+
+  const pushRes = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${cfg.token}`,
+      'Accept': 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!pushRes.ok) {
+    const errorData = await pushRes.json().catch(() => ({}));
+    throw new Error(errorData.message || 'Failed to upload vault to GitHub.');
+  }
+
+  const result = await pushRes.json();
+  sessionStorage.setItem('kdbx_github_sha', result.content.sha);
+  return result;
+}
+
+// ==========================================
+// Scanner, QR & OCR Engines
+// ==========================================
 async function startCamera(videoElement) {
   videoStream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -173,11 +294,10 @@ function parseWifiQR(rawString) {
   if (!rawString) return null;
   const str = rawString.trim();
 
-  // 1. Jio / Arcadyan / ISP XML-based QR Format
+  // 1. Reliance Jio / Arcadyan / Indian ISP XML sticker format
   if (str.includes('<SSID>') || str.includes('<PWD>')) {
     const ssidMatch = str.match(/<SSID>(.*?)<\/SSID>/i);
     const pwdMatch = str.match(/<PWD>(.*?)<\/PWD>/i);
-
     return {
       ssid: ssidMatch ? ssidMatch[1].trim() : '',
       password: pwdMatch ? pwdMatch[1].trim() : '',
@@ -185,12 +305,11 @@ function parseWifiQR(rawString) {
     };
   }
 
-  // 2. Standard Android / iOS QR Format (WIFI:T:WPA;S:MyNet;P:Pass;;)
+  // 2. Standard Wi-Fi Protocol QR (WIFI:S:name;T:WPA;P:pass;;)
   if (str.startsWith('WIFI:')) {
     const ssidMatch = str.match(/S:((?:\\;|[^;])+);/);
     const passMatch = str.match(/P:((?:\\;|[^;])+);/);
     const typeMatch = str.match(/T:([^;]+);/);
-
     return {
       ssid: ssidMatch ? ssidMatch[1].replace(/\\;/g, ';') : '',
       password: passMatch ? passMatch[1].replace(/\\;/g, ';') : '',
@@ -198,7 +317,7 @@ function parseWifiQR(rawString) {
     };
   }
 
-  // 3. Fallback: Check if string has plain key-value or tags
+  // 3. Fallback Key-Value pattern
   const fallbackSsid = str.match(/(?:SSID|Network)[\s:=]+([^\r\n]+)/i);
   const fallbackPwd = str.match(/(?:PWD|Password|Key)[\s:=]+([^\r\n]+)/i);
   if (fallbackSsid || fallbackPwd) {
@@ -211,7 +330,6 @@ function parseWifiQR(rawString) {
 
   return null;
 }
-
 
 function monitorQRCode(videoElement, canvasElement, onDetected) {
   const ctx = canvasElement.getContext('2d');
@@ -249,7 +367,7 @@ function monitorQRCode(videoElement, canvasElement, onDetected) {
   }
 }
 
-function scanRouterText(videoElement, canvasElement) {
+async function scanRouterText(videoElement, canvasElement) {
   if (typeof Tesseract === 'undefined') {
     throw new Error('OCR library (Tesseract) not loaded.');
   }
@@ -262,46 +380,45 @@ function scanRouterText(videoElement, canvasElement) {
   const d = imgData.data;
   for (let i = 0; i < d.length; i += 4) {
     const avg = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2];
-    const threshold = avg > 120 ? 255 : 0;
-    d[i] = threshold;
-    d[i + 1] = threshold;
-    d[i + 2] = threshold;
+    d[i] = avg > 120 ? 255 : 0;
+    d[i + 1] = avg > 120 ? 255 : 0;
+    d[i + 2] = avg > 120 ? 255 : 0;
   }
   ctx.putImageData(imgData, 0, 0);
 
-  return Tesseract.recognize(canvasElement, 'eng').then(({ data: { text } }) => {
-    // Check XML format first
-    if (text.includes('<SSID>') || text.includes('<PWD>')) {
-      const ssidMatch = text.match(/<SSID>(.*?)<\/SSID>/i);
-      const pwdMatch = text.match(/<PWD>(.*?)<\/PWD>/i);
-      return {
-        ssid: ssidMatch ? ssidMatch[1].trim() : '',
-        password: pwdMatch ? pwdMatch[1].trim() : '',
-        type: 'WPA2'
-      };
-    }
+  const { data: { text } } = await Tesseract.recognize(canvasElement, 'eng');
+  
+  if (text.includes('<SSID>') || text.includes('<PWD>')) {
+    const ssidMatch = text.match(/<SSID>(.*?)<\/SSID>/i);
+    const pwdMatch = text.match(/<PWD>(.*?)<\/PWD>/i);
+    return {
+      ssid: ssidMatch ? ssidMatch[1].trim() : '',
+      password: pwdMatch ? pwdMatch[1].trim() : '',
+      type: 'WPA2'
+    };
+  }
 
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-    const res = { ssid: '', password: '', type: 'WPA2' };
-    const ssidPat = /(?:SSID|Network\s*Name|Wi-Fi\s*Name|Wireless\s*Name)[\s:]+([A-Za-z0-9_\-\.]+)/i;
-    const passPat = /(?:Password|PWD|PIN|Key|WPA\s*Key|WPA2\s*Key|Network\s*Key|Passphrase)[\s:]+([A-Za-z0-9!@#$%^&*_\-\.]+)/i;
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const res = { ssid: '', password: '', type: 'WPA2' };
+  const ssidPat = /(?:SSID|Network\s*Name|Wi-Fi\s*Name|Wireless\s*Name)[\s:]+([A-Za-z0-9_\-\.]+)/i;
+  const passPat = /(?:Password|PWD|PIN|Key|WPA\s*Key|WPA2\s*Key|Network\s*Key|Passphrase)[\s:]+([A-Za-z0-9!@#$%^&*_\-\.]+)/i;
 
-    for (const line of lines) {
-      if (!res.ssid) {
-        const m = line.match(ssidPat);
-        if (m) res.ssid = m[1];
-      }
-      if (!res.password) {
-        const m = line.match(passPat);
-        if (m) res.password = m[1];
-      }
+  for (const line of lines) {
+    if (!res.ssid) {
+      const m = line.match(ssidPat);
+      if (m) res.ssid = m[1];
     }
-    return res;
-  });
+    if (!res.password) {
+      const m = line.match(passPat);
+      if (m) res.password = m[1];
+    }
+  }
+  return res;
 }
 
-
-// --- Geolocation Subsystem ---
+// ==========================================
+// Geolocation Subsystem
+// ==========================================
 function getCurrentCoordinates() {
   return new Promise((resolve, reject) => {
     if (!('geolocation' in navigator)) {
@@ -326,17 +443,9 @@ async function reverseGeocode(lat, lng) {
   }
 }
 
-// --- UI Application Logic ---
-let vaultData = [];
-let activeFilter = 'all';
-let editTargetId = null;
-let activeCoordinates = null;
-
-function escapeHTML(str) {
-  if (!str) return '';
-  return str.replace(/[&<>'"]/g, t => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[t] || t));
-}
-
+// ==========================================
+// UI Helpers & Render Logic
+// ==========================================
 function updateVaultUI() {
   const statusBadge = document.getElementById('vault-status-indicator');
   const unlocked = isVaultUnlocked();
@@ -444,7 +553,7 @@ function renderCards() {
       }
     });
 
-    if (wifiList) wifiList.appendChild(card);
+    wifiList.appendChild(card);
   });
 }
 
@@ -487,18 +596,20 @@ function openConfirmationForm(data = {}) {
   document.getElementById('confirm-modal').classList.remove('hidden');
 }
 
-// --- Top-Level Global Button Actions ---
+// ==========================================
+// Window Handlers (Guaranteed Mobile Triggers)
+// ==========================================
 window.handleUnlockVault = async function () {
   const masterPasswordInput = document.getElementById('master-password-input');
   const password = masterPasswordInput ? masterPasswordInput.value.trim() : '';
   if (!password) {
-    alert('Please enter a master password.');
+    alert('Please enter your master password.');
     return;
   }
   try {
     const buffer = getStoredKdbxBuffer();
     if (!buffer) {
-      alert('No vault found yet. Click "Create New Vault" instead.');
+      alert('No vault found yet. Tap "Create New Vault" or sync from GitHub.');
       return;
     }
     await unlockKdbx(buffer, password);
@@ -531,7 +642,9 @@ window.handleCreateVault = async function () {
   }
 };
 
-// --- DOM Event Initialization ---
+// ==========================================
+// DOM Initialization & Event Wire-Up
+// ==========================================
 document.addEventListener('DOMContentLoaded', () => {
   const searchInput = document.getElementById('vault-search');
   const filterAll = document.getElementById('filter-all');
@@ -552,6 +665,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnCancelSave = document.getElementById('btn-cancel-save');
   const fileImportKdbx = document.getElementById('file-import-kdbx');
 
+  // Cloud Sync Selectors
+  const btnSyncCloud = document.getElementById('btn-sync-cloud');
+  const btnOpenSettings = document.getElementById('btn-open-settings');
+  const btnCloseSettings = document.getElementById('btn-close-settings');
+  const btnSaveSettings = document.getElementById('btn-save-settings');
+  const settingsModal = document.getElementById('settings-modal');
+  const inputGhToken = document.getElementById('gh-token');
+  const inputGhOwner = document.getElementById('gh-owner');
+  const inputGhRepo = document.getElementById('gh-repo');
+  const inputGhFile = document.getElementById('gh-filename');
+
+  // Search & Filter Listeners
   if (searchInput) searchInput.addEventListener('input', renderCards);
 
   if (filterAll) {
@@ -572,6 +697,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Vault Controls
   if (btnLockVault) {
     btnLockVault.addEventListener('click', () => {
       lockVault();
@@ -603,6 +729,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Scanner Modal & Actions
   if (btnOpenScanner) {
     btnOpenScanner.addEventListener('click', async () => {
       if (!isVaultUnlocked()) return showAuthPrompt();
@@ -630,7 +757,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnRunOCR) {
     btnRunOCR.addEventListener('click', async () => {
-      if (scanStatus) scanStatus.textContent = 'Analyzing with OCR...';
+      if (scanStatus) scanStatus.textContent = 'Analyzing sticker with OCR...';
       btnRunOCR.disabled = true;
       try {
         const data = await scanRouterText(video, canvas);
@@ -638,13 +765,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (scannerModal) scannerModal.classList.add('hidden');
         openConfirmationForm(data);
       } catch (err) {
-        if (scanStatus) scanStatus.textContent = 'Could not detect credentials.';
+        if (scanStatus) scanStatus.textContent = 'Could not detect router text.';
       } finally {
         btnRunOCR.disabled = false;
       }
     });
   }
 
+  // Location Triggers
   if (btnDetectLocation) {
     btnDetectLocation.addEventListener('click', async () => {
       btnDetectLocation.disabled = true;
@@ -681,6 +809,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Save/Discard Entry Triggers
   if (btnConfirmSave) {
     btnConfirmSave.addEventListener('click', async () => {
       const inputSsid = document.getElementById('input-ssid');
@@ -730,6 +859,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // File Import Trigger
   if (fileImportKdbx) {
     fileImportKdbx.addEventListener('change', (e) => {
       const file = e.target.files[0];
@@ -737,7 +867,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const password = masterPasswordInput ? masterPasswordInput.value.trim() : '';
       if (!file) return;
       if (!password) {
-        alert('Enter the master password before importing.');
+        alert('Enter master password before importing file.');
         return;
       }
       const reader = new FileReader();
@@ -749,10 +879,77 @@ document.addEventListener('DOMContentLoaded', () => {
           updateVaultUI();
           await refreshVault();
         } catch (_) {
-          alert('Failed to decrypt imported file. Check password.');
+          alert('Failed to decrypt imported file. Verify password.');
         }
       };
       reader.readAsArrayBuffer(file);
+    });
+  }
+
+  // GitHub Settings Handlers
+  if (btnOpenSettings) {
+    btnOpenSettings.addEventListener('click', () => {
+      const current = getGitHubConfig();
+      if (current) {
+        if (inputGhToken) inputGhToken.value = current.token || '';
+        if (inputGhOwner) inputGhOwner.value = current.owner || '';
+        if (inputGhRepo) inputGhRepo.value = current.repo || '';
+        if (inputGhFile) inputGhFile.value = current.filePath || 'vault.kdbx';
+      }
+      if (settingsModal) settingsModal.classList.remove('hidden');
+    });
+  }
+
+  if (btnCloseSettings) {
+    btnCloseSettings.addEventListener('click', () => {
+      if (settingsModal) settingsModal.classList.add('hidden');
+    });
+  }
+
+  if (btnSaveSettings) {
+    btnSaveSettings.addEventListener('click', () => {
+      const token = inputGhToken ? inputGhToken.value.trim() : '';
+      const owner = inputGhOwner ? inputGhOwner.value.trim() : '';
+      const repo = inputGhRepo ? inputGhRepo.value.trim() : '';
+      const file = (inputGhFile ? inputGhFile.value.trim() : '') || 'vault.kdbx';
+
+      if (!token || !owner || !repo) {
+        alert('Token, Owner, and Repo Name are required.');
+        return;
+      }
+
+      saveGitHubConfig(token, owner, repo, file);
+      if (settingsModal) settingsModal.classList.add('hidden');
+      alert('GitHub sync configuration saved.');
+    });
+  }
+
+  // GitHub Sync Execution Trigger
+  if (btnSyncCloud) {
+    btnSyncCloud.addEventListener('click', async () => {
+      btnSyncCloud.disabled = true;
+      btnSyncCloud.textContent = '⏳ Syncing...';
+
+      try {
+        if (!isVaultUnlocked()) {
+          const { buffer } = await pullFromGitHub();
+          if (buffer) {
+            localStorage.setItem(STORAGE_KEY, arrayBufferToBase64(buffer));
+            alert('Remote vault fetched from GitHub. Enter master password to decrypt.');
+          } else {
+            alert('No existing remote vault found. Create and unlock a vault first to upload.');
+          }
+          showAuthPrompt();
+        } else {
+          await pushToGitHub();
+          alert('Encrypted vault successfully uploaded to private GitHub repository!');
+        }
+      } catch (err) {
+        alert('Sync Failed: ' + err.message);
+      } finally {
+        btnSyncCloud.disabled = false;
+        btnSyncCloud.textContent = '🔄 Sync';
+      }
     });
   }
 
