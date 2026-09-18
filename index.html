@@ -21,6 +21,8 @@
       <span id="vault-status-indicator" class="status-badge locked">Locked</span>
     </div>
     <div class="header-actions">
+      <button type="button" id="btn-sync-cloud" class="btn-secondary" title="Sync with GitHub">🔄 Sync</button>
+      <button type="button" id="btn-open-settings" class="btn-secondary" title="GitHub Sync Settings">⚙️</button>
       <button type="button" id="btn-lock-vault" class="btn-secondary" title="Lock Vault">🔒 Lock</button>
       <button type="button" id="btn-export-kdbx" class="btn-secondary" title="Export .kdbx">💾 Export</button>
       <button type="button" id="btn-open-scanner" class="btn-primary">📷 Scan</button>
@@ -140,7 +142,40 @@
     </div>
   </div>
 
-  <!-- Standard script tag (No import errors) -->
+  <!-- GitHub Sync Settings Modal -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-content confirm-form">
+      <h3>GitHub Sync Settings</h3>
+      <p style="font-size:0.85rem; color:#888;">Configure your private repository to enable cross-device synchronization.</p>
+      
+      <div class="form-group">
+        <label for="gh-token">Personal Access Token (PAT)</label>
+        <input type="password" id="gh-token" placeholder="github_pat_..." autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label for="gh-owner">GitHub Username / Owner</label>
+        <input type="text" id="gh-owner" placeholder="e.g. your-username">
+      </div>
+
+      <div class="form-group">
+        <label for="gh-repo">Private Repo Name</label>
+        <input type="text" id="gh-repo" placeholder="e.g. wifi-vault-store">
+      </div>
+
+      <div class="form-group">
+        <label for="gh-filename">Vault File Path</label>
+        <input type="text" id="gh-filename" value="vault.kdbx">
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" id="btn-close-settings" class="btn-secondary">Close</button>
+        <button type="button" id="btn-save-settings" class="btn-primary">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- App Core Script -->
   <script src="js/app.js"></script>
 </body>
 </html>
