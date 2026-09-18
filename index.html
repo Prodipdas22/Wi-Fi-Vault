@@ -1,52 +1,30 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f172a">
-  <meta name="description" content="A local-first encrypted Wi-Fi credential vault">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1220">
+  <meta name="description" content="Private, local-first Wi-Fi password vault">
   <title>Wi-Fi Vault</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="css/style.css">
   <style>
-    /* Keep hidden overlays inert even when a stylesheet fails to load. */
-    .hidden { display:none !important; pointer-events:none !important; visibility:hidden !important; }
-    button, input, select, label.btn-link { min-height:44px; }
-    button { touch-action:manipulation; }
-    .modal { z-index:1000; }
-    .modal-content { max-height:calc(100dvh - 2rem); overflow-y:auto; }
+    .hidden{display:none!important;visibility:hidden!important;pointer-events:none!important}
+    .modal{z-index:9999}.modal-content{max-height:calc(100dvh - 2rem);overflow:auto}
+    button,input,select,label{touch-action:manipulation}button,input,select,label.btn-link{min-height:44px}
+    .auth-tools{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-top:.4rem}
+    .auth-tools button{font-size:.85rem}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/kdbxweb@2.1.1/dist/kdbxweb.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 </head>
 <body>
-  <header>
-    <div class="header-title-row"><h1>Wi-Fi Vault</h1><span id="vault-status-indicator" class="status-badge locked">Locked</span></div>
-    <div class="header-actions">
-      <button type="button" id="btn-sync-cloud" class="btn-secondary" title="Sync with GitHub">🔄 Sync</button>
-      <button type="button" id="btn-open-settings" class="btn-secondary" title="GitHub Sync Settings">⚙️</button>
-      <button type="button" id="btn-lock-vault" class="btn-secondary" title="Lock Vault">🔒 Lock</button>
-      <button type="button" id="btn-export-kdbx" class="btn-secondary" title="Export .kdbx">💾 Export</button>
-      <button type="button" id="btn-open-scanner" class="btn-primary">📷 Scan</button>
-      <button type="button" id="btn-manual-add" class="btn-secondary">+ Add</button>
-    </div>
-  </header>
-  <main id="vault-view">
-    <div class="vault-controls"><input type="search" id="vault-search" placeholder="Search by SSID or location..." autocomplete="off"><div class="filter-group"><button type="button" id="filter-all" class="btn-filter active">All</button><button type="button" id="filter-favorites" class="btn-filter">★ Favorites</button></div></div>
-    <div id="vault-empty" class="empty-state hidden"><p>No Wi-Fi credentials stored yet.</p><span>Scan a router sticker or add one manually.</span></div>
-    <div id="wifi-list" class="wifi-grid"></div>
-  </main>
-
-  <div id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
-    <div class="modal-content auth-box"><h2 id="auth-title">Unlock KDBX Vault</h2><p>Enter your master password to decrypt your Wi-Fi credentials.</p><div class="form-group"><label for="master-password-input">Master Password</label><input type="password" id="master-password-input" placeholder="Enter master password" autocomplete="current-password"></div><div id="auth-error" class="error-banner hidden" role="alert"></div><div class="auth-buttons"><button type="button" id="btn-unlock-vault" class="btn-primary" onclick="window.handleUnlockVault(event)">Unlock</button><button type="button" id="btn-create-new-kdbx" class="btn-secondary" onclick="window.handleCreateVault(event)">Create New Vault</button></div><div class="import-section"><label for="file-import-kdbx" class="btn-link">Or import existing .kdbx file</label><input type="file" id="file-import-kdbx" accept=".kdbx,application/octet-stream"></div></div>
-  </div>
-
-  <div id="scanner-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-content scanner-container"><div class="scanner-header"><h3>Scan Router / QR</h3><button type="button" id="btn-close-scanner" class="btn-close" aria-label="Close">&times;</button></div><div class="video-wrapper"><video id="camera-stream" playsinline muted></video><canvas id="capture-canvas" class="hidden"></canvas><div class="scanner-reticle"><div class="reticle-guide"></div></div></div><div class="scanner-controls"><span id="scan-status">Point at QR code or router sticker...</span><button type="button" id="btn-run-ocr" class="btn-secondary">Capture Sticker Text (OCR)</button></div></div></div>
-
-  <div id="confirm-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-content confirm-form"><h3>Verify Wi-Fi Details</h3><div class="form-group"><label for="input-ssid">Network Name (SSID)</label><input type="text" id="input-ssid" required></div><div class="form-group"><label for="input-password">Password</label><input type="text" id="input-password" autocomplete="off"></div><div class="form-group"><label for="input-auth-type">Security Type</label><select id="input-auth-type"><option value="WPA2">WPA/WPA2/WPA3</option><option value="WEP">WEP</option><option value="nopass">None (Open)</option></select></div><div class="location-group"><label for="input-location-name">📍 Location Name (Optional)</label><div class="input-with-button"><input type="text" id="input-location-name"><button type="button" id="btn-detect-location" class="btn-secondary" title="Fetch GPS Location">🎯</button></div><div id="location-coordinates-display" class="coordinates-label hidden">Lat: <span id="display-lat"></span>, Lng: <span id="display-lng"></span> <button type="button" id="btn-clear-coords" class="btn-clear-link">Clear</button></div></div><div class="modal-actions"><button type="button" id="btn-cancel-save" class="btn-secondary">Discard</button><button type="button" id="btn-confirm-save" class="btn-primary">Save to Vault</button></div></div></div>
-
-  <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-content confirm-form"><h3>GitHub Sync Settings</h3><p>Use a token with repository Contents read/write permission. The encrypted KDBX is sent to GitHub; the token is stored only in this browser.</p><div class="form-group"><label for="gh-token">Personal Access Token (PAT)</label><input type="password" id="gh-token" placeholder="github_pat_... or ghp_..." autocomplete="off"></div><div class="form-group"><label for="gh-owner">GitHub Username / Owner</label><input type="text" id="gh-owner" placeholder="your-username"></div><div class="form-group"><label for="gh-repo">Private Repo Name</label><input type="text" id="gh-repo" placeholder="wifi-vault-store"></div><div class="form-group"><label for="gh-filename">Vault File Path</label><input type="text" id="gh-filename" value="vault.kdbx"></div><div class="modal-actions"><button type="button" id="btn-close-settings" class="btn-secondary">Close</button><button type="button" id="btn-save-settings" class="btn-primary">Save Settings</button></div></div></div>
-  <script src="js/app.js"></script>
+<header><div class="header-title-row"><h1>Wi-Fi Vault</h1><span id="vault-status-indicator" class="status-badge locked">Locked</span></div><div class="header-actions"><button id="btn-sync-cloud" class="btn-secondary" type="button">🔄 Sync</button><button id="btn-open-settings" class="btn-secondary" type="button">⚙️</button><button id="btn-lock-vault" class="btn-secondary" type="button">🔒 Lock</button><button id="btn-export-kdbx" class="btn-secondary" type="button">💾 Export</button><button id="btn-open-scanner" class="btn-primary" type="button">📷 Scan</button><button id="btn-manual-add" class="btn-secondary" type="button">＋ Add</button></div></header>
+<main><div class="vault-controls"><input id="vault-search" type="search" placeholder="Search networks…" autocomplete="off"><div class="filter-group"><button id="filter-all" class="btn-filter active" type="button">All</button><button id="filter-favorites" class="btn-filter" type="button">★ Favorites</button></div></div><div id="vault-empty" class="empty-state hidden"><p>No Wi-Fi credentials yet.</p><span>Add a network or download your vault.</span></div><div id="wifi-list" class="wifi-grid"></div></main>
+<div id="auth-modal" class="modal" role="dialog" aria-modal="true"><div class="modal-content auth-box"><h2>Unlock Wi-Fi Vault</h2><p>Use your master password. It never leaves this device.</p><div class="form-group"><label for="master-password-input">Master password</label><input id="master-password-input" type="password" autocomplete="current-password"></div><div id="auth-error" class="error-banner hidden" role="alert"></div><div class="auth-buttons"><button id="btn-unlock-vault" class="btn-primary" type="button">Unlock</button><button id="btn-create-new-kdbx" class="btn-secondary" type="button">Create new</button></div><div class="auth-tools"><button id="btn-download-vault" class="btn-secondary" type="button">⬇ Download vault</button><button id="btn-auth-settings" class="btn-secondary" type="button">⚙ Sync settings</button></div><div class="import-section"><label for="file-import-kdbx" class="btn-link">Import .kdbx file</label><input id="file-import-kdbx" type="file" accept=".kdbx,application/octet-stream"></div></div></div>
+<div id="confirm-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-content confirm-form"><h3 id="form-title">Add Wi-Fi network</h3><div class="form-group"><label for="input-ssid">Network name (SSID)</label><input id="input-ssid" type="text" required></div><div class="form-group"><label for="input-password">Password</label><input id="input-password" type="text" autocomplete="off"></div><div class="form-group"><label for="input-auth-type">Security</label><select id="input-auth-type"><option value="WPA2">WPA/WPA2/WPA3</option><option value="WEP">WEP</option><option value="nopass">Open</option></select></div><div class="modal-actions"><button id="btn-cancel-save" class="btn-secondary" type="button">Cancel</button><button id="btn-confirm-save" class="btn-primary" type="button">Save</button></div></div></div>
+<div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-content confirm-form"><h3>Private GitHub vault</h3><p>Use the exact private repository slug. Example: <b>KDbx-vault</b>.</p><div class="form-group"><label for="gh-token">Fine-grained PAT</label><input id="gh-token" type="password" autocomplete="off" placeholder="github_pat_…"></div><div class="form-group"><label for="gh-owner">Owner</label><input id="gh-owner" type="text" value="Prodipdas22"></div><div class="form-group"><label for="gh-repo">Private repository</label><input id="gh-repo" type="text" placeholder="KDbx-vault"></div><div class="form-group"><label for="gh-filename">File path</label><input id="gh-filename" type="text" value="vault.kdbx"></div><div class="modal-actions"><button id="btn-close-settings" class="btn-secondary" type="button">Cancel</button><button id="btn-save-settings" class="btn-primary" type="button">Save</button></div></div></div>
+<div id="scanner-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-content scanner-container"><div class="scanner-header"><h3>Scan Wi-Fi QR</h3><button id="btn-close-scanner" class="btn-close" type="button">×</button></div><div class="video-wrapper"><video id="camera-stream" playsinline muted></video><canvas id="capture-canvas" class="hidden"></canvas></div><div class="scanner-controls"><span id="scan-status">Point at a Wi-Fi QR code.</span></div></div></div>
+<script src="js/app.js"></script>
 </body>
 </html>
